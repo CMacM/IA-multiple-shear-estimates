@@ -55,7 +55,7 @@ def cut_redshift(shapefile, zfile, method, zmin, zmax, flag_value=0):
     del indexes #delete flag indexes to free up memory
     
     print('Data sliced, writing to new file...')
-    fits.writeto(data_dir+'y1_'+method+'_%g-%g.fits'%(zmin,zmax), data)
+    fits.writeto(data_dir+'y1_'+method+'_z=%g-%g.fits'%(zmin,zmax), data)
     
     end = time.time()
     print('Runtime: %g'%(end-start))
@@ -93,10 +93,9 @@ def cut_zbin(shapefile, zfile, method, zbin, flag_value=0):
     end = time.time()
     print('Runtime: %g'%(end-start))
     
-def correct_bias(filename, method, zrange):
+def correct_additive_bias(filename, method, zrange):
     '''Function to apply additive bias correction to e1 and 
-    e2 and append results as a new column in the fits file.
-    zrange should be supplied as a string for file naming'''
+    e2. zrange should be supplied as a string for file naming'''
     start = time.time()
     print('Opening files...')
     
@@ -108,4 +107,47 @@ def correct_bias(filename, method, zrange):
     data['e2'] = (data['e2'] - data['c2']) / (1.0 + data['m'])
     
     print('Correction applied, saving...')
-    fits.writeto(data_dir+'y1_'+method+'_corrected_'+zrange+'.fits', data)
+    fits.writeto(data_dir+'y1_'+method+'_corrected_z='+zrange+'.fits', data)
+    
+def match_catalogues(im3file, mcalfile):
+    '''Function to find and match obejcts in both mcal and im3
+    catalogues and slice the data so only those sources in both 
+    catalogues remain. Must be run on files already cut on flags.'''
+    start = time.time()
+    print('Opening files and collecting IDs...')
+    with fits.open(data_dir+im3file) as im3hdu:
+        im3data = im3hdu[1].data        
+    im3IDs = im3data['coadd_objects_id']
+    del im3data
+    
+    with fits.open(data_dir+mcalfile) as mcalhdu:
+        mcaldata = mcalhdu[1].data        
+    mcalIDs = mcaldata['coadd_objects_id']
+    del mcaldata
+    
+    print('Finding ID intersections between catalogues...')
+    matches, im3indices, mcalindices = np.intersect1d(im3IDs, mcalIDs, return_indices=True)
+    del matches, im3IDs, mcalIDs
+    
+    print('Slicing im3 data...')
+    with fits.open(data_dir+im3file) as im3hdu:
+        im3data = im3hdu[1].data 
+    im3data = im3data[im3indices]
+    del im3indices
+    
+    print('Saving im3 data to new file...')
+    fits.writeto(data_dir+'y1_im3_shapes_matched.fits', im3data)
+    del im3data
+    
+    print('Slicing mcal data...')
+    with fits.open(data_dir+mcalfile) as mcalhdu:
+        mcaldata = mcalhdu[1].data
+    mcaldata = mcaldata[mcalindices]
+    del mcalindices
+    
+    print('Saving mcal data to new file...')
+    fits.writeto(data_dir+'y1_mcal_shapes_matched.fits', mcaldata)
+    
+    end = time.time()
+    print('Runtime: %g'%(end-start))
+    
