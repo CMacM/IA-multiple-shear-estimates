@@ -8,6 +8,7 @@ data_dir = '/home/b7009348/projects/WGL_Project/DES-data/'
 def cut_flags(filename, method, flag_value=0):
     '''Function to make cuts to DES Y1 shape data based on flag values. Default flag is 0
     which defines a good source to use'''
+    
     start = time.time()
     print('Opening file...')
     
@@ -31,6 +32,7 @@ def cut_redshift(shapefile, zfile, method, zmin, zmax, flag_value=0):
     '''Function to make cuts to DES Y1 data based on the redshift
     of source in a provided redshift range. MUST USE ORGINAL DATA FILE SO
     INDEXES ARE PRESERVED'''
+    
     start = time.time()
     print('Opening files...')  
     
@@ -38,7 +40,7 @@ def cut_redshift(shapefile, zfile, method, zmin, zmax, flag_value=0):
         zdata = zhdul[1].data
         
     print('Locating sources in range %g - %g...'%(zmin,zmax))
-    zindexes = list(locate(zdata['MEAN_Z'], lambda x: x >= zmin and x <= zmax))
+    zindexes = list(locate(zdata['MEAN_Z'], lambda x: x > zmin and x < zmax))
     del zdata #remove redshift data to free up memory
     
     print('Sources in range found, slicing data...')    
@@ -64,6 +66,7 @@ def cut_zbin(shapefile, zfile, method, zbin, flag_value=0):
     '''Function to make cuts to DES Y1 data based on the redshift
     bin flags. MUST USE ORGINAL DATA FILE SO
     INDEXES ARE PRESERVED. Method must be provided as im3 or mcal'''
+    
     start = time.time()
     print('Opening files...')  
     
@@ -93,9 +96,10 @@ def cut_zbin(shapefile, zfile, method, zbin, flag_value=0):
     end = time.time()
     print('Runtime: %g'%(end-start))
     
-def correct_additive_bias(filename, method, zrange):
+def correct_bias(filename, method, zrange):
     '''Function to apply additive bias correction to e1 and 
     e2. zrange should be supplied as a string for file naming'''
+    
     start = time.time()
     print('Opening files...')
     
@@ -103,8 +107,8 @@ def correct_additive_bias(filename, method, zrange):
         data = hdu[1].data
         
     print('Applying additive bias correction...')
-    data['e1'] = (data['e1'] - data['c1']) / (1.0 + data['m'])
-    data['e2'] = (data['e2'] - data['c2']) / (1.0 + data['m'])
+    data['e1'] = (data['e1'] - data['c1'])
+    data['e2'] = (data['e2'] - data['c2'])
     
     print('Correction applied, saving...')
     fits.writeto(data_dir+'y1_'+method+'_corrected_z='+zrange+'.fits', data)
@@ -113,6 +117,7 @@ def match_catalogues(im3file, mcalfile):
     '''Function to find and match obejcts in both mcal and im3
     catalogues and slice the data so only those sources in both 
     catalogues remain. Must be run on files already cut on flags.'''
+    
     start = time.time()
     print('Opening files and collecting IDs...')
     with fits.open(data_dir+im3file) as im3hdu:
@@ -150,4 +155,26 @@ def match_catalogues(im3file, mcalfile):
     
     end = time.time()
     print('Runtime: %g'%(end-start))
+
+def cut_lenses(lensfile, zmin, zmax):
+    '''Function to make redshift cuts to DES lenses.
+    Tomographic cuts should be made as in the offical DES analysis,
+    otherwise luminosity and sample mixing may occur.'''
     
+    start = time.time()
+    print('Opening files...')  
+    with fits.open(data_dir+lensfile) as hdul:
+        data = hdul[1].data
+        
+    print('Locating lenses in range %g - %g...'%(zmin,zmax))
+    indexes = list(locate(data['ZREDMAGIC'], lambda x: x > zmin and x < zmax))
+    
+    print('Lenses in range found, slicing data...')    
+    data = data[indexes]
+    del indexes #remove redshift range indexes to free up memory
+    
+    print('Data sliced, writing to new file...')
+    fits.writeto(data_dir+'DES_Y1A1_Lenses_z=%g-%g.fits'%(zmin,zmax), data)
+    
+    end = time.time()
+    print('Runtime: %g'%(end-start))
