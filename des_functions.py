@@ -1,6 +1,7 @@
 import astropy.io.fits as fits
 import numpy as np
 import time
+import pyccl as ccl
 from more_itertools import locate
 
 data_dir = '/home/b7009348/projects/WGL_Project/DES-data/'
@@ -30,31 +31,34 @@ def cut_flags(filename, method, flag_value=0):
     
 def cut_redshift(shapefile, zfile, method, zmin, zmax, flag_value=0):
     '''Function to make cuts to DES Y1 data based on the redshift
-    of source in a provided redshift range. MUST USE ORGINAL DATA FILE SO
-    INDEXES ARE PRESERVED'''
+    of source in a provided redshift range.'''
     
     start = time.time()
     print('Opening files...')  
     
     with fits.open(data_dir+zfile) as zhdul:
         zdata = zhdul[1].data
+    zIDs = zdata['coadd_objects_id']
         
     print('Locating sources in range %g - %g...'%(zmin,zmax))
     zindexes = list(locate(zdata['MEAN_Z'], lambda x: x > zmin and x < zmax))
     del zdata #remove redshift data to free up memory
     
-    print('Sources in range found, slicing data...')    
+    print('Sources in range found, slicing data...')
+    zIDs = zIDs[zindexes]
+    del zindexes
+    
+    print('Matching redshifts to catalogue...')
     with fits.open(data_dir+shapefile) as hdul:
         data = hdul[1].data
-    data = data[zindexes]
-    del zindexes #remove redshift range indexes to free up memory
+    catIDs = data['coadd_objects_id']
     
-    print('Redshift range sliced, locating flags...')
-    indexes = list(locate(data['flags_select'], lambda x: x == flag_value))
+    matches, catIndices, zIndices = np.intersect1d(catIDs, zIDs, return_indices=True)
+    del matches, catIDs, zIDs, zIndices
     
-    print('Flags located, slicing shape data...')
-    data = data[indexes]
-    del indexes #delete flag indexes to free up memory
+    print('Slicing catalogue data...')
+    data = data[catIndices]
+    del catIndices
     
     print('Data sliced, writing to new file...')
     fits.writeto(data_dir+'y1_'+method+'_z=%g-%g.fits'%(zmin,zmax), data)
@@ -178,3 +182,50 @@ def cut_lenses(lensfile, zmin, zmax):
     
     end = time.time()
     print('Runtime: %g'%(end-start))
+    
+def calculate_F(nbins, source_z, lens_z, source_weights):
+    # set number of bins and code will bin data in range max-min zmc, incl. weights
+    source_freq, source_bin_edges = np.histogram(source_z, bins=nbins, range=(source_z.min(), source_z.max()), weights=source_weights)
+    lens_freq, lens_bin_edges = np.histogram(lens_z, bins=nbins, range=(lens_z.min(), lens_z.max()))
+    
+    # calculate bin width and find bin centers
+    source_binsz = np.mean(np.diff(source_bin_edges))
+    source_bin_centers = source_bin_edges[1:] - source_binsz/2.0
+
+    lens_binsz = np.mean(np.diff(lens_bin_edges))
+    lens_bin_centers = lens_bin_edges[1:] - lens_binsz/2.0
+    
+    # Set up cosmological parameters
+    OmegaM = 0.293
+    OmegaB = 0.0475
+    n_s = 1.0
+    sigma8 = 0.966
+    Ho = 70.8
+    h = Ho/100.0 # h = H0/100
+
+    # Set up a cosmology object, we need this to do calculations
+    cosmo = ccl.Cosmology(Omega_c = OmegaM-OmegaB, Omega_b = OmegaB, n_s = n_s, h = h, sigma8 = sigma8)
+    
+    # convert to comoving dist.
+    source_chi = ccl.comoving_radial_distance(cosmo, 1.0/(1.0+source_bin_centers))
+    lens_chi = ccl.comoving_radial_distance(cosmo, 1.0/(1.0+lens_bin_centers))
+    
+    # calculate rand,close
+    old_rand_close = 0.0
+    for i in range(len(source_chi)):
+        for j in range(len(lens_chi)):
+            if abs(source_chi[i] - lens_chi[j]) <= 100.0:
+                rand_close = old_rand_close + source_freq[i] * lens_freq[j]
+                old_rand_close = rand_close
+
+    # calculate rand
+    old_rand = 0.0
+    for i in range(len(source_chi)):
+        for j in range(len(lens_chi)):
+            rand = old_rand + source_freq[i] * lens_freq[j]
+            old_rand = rand
+            
+    # calculate F      
+    F = rand_close/rand
+    
+    return F
