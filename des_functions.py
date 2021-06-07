@@ -184,10 +184,14 @@ def cut_lenses(lensfile, zmin, zmax):
     print('Runtime: %g'%(end-start))
     
 def calculate_F(nbins, source_z, lens_z, source_weights):
+    '''Function takes source and lens redshift values (in the form of an array, not fits file) and
+    uses them to calculate the parameter F, which represents the fraction of the sample we expect to
+    be intrinsically aligned'''
+    
     # set number of bins and code will bin data in range max-min zmc, incl. weights
     source_freq, source_bin_edges = np.histogram(source_z, bins=nbins, range=(source_z.min(), source_z.max()), weights=source_weights)
     lens_freq, lens_bin_edges = np.histogram(lens_z, bins=nbins, range=(lens_z.min(), lens_z.max()))
-    
+
     # calculate bin width and find bin centers
     source_binsz = np.mean(np.diff(source_bin_edges))
     source_bin_centers = source_bin_edges[1:] - source_binsz/2.0
@@ -209,7 +213,7 @@ def calculate_F(nbins, source_z, lens_z, source_weights):
     # convert to comoving dist.
     source_chi = ccl.comoving_radial_distance(cosmo, 1.0/(1.0+source_bin_centers))
     lens_chi = ccl.comoving_radial_distance(cosmo, 1.0/(1.0+lens_bin_centers))
-    
+
     # calculate rand,close
     old_rand_close = 0.0
     for i in range(len(source_chi)):
