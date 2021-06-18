@@ -1,10 +1,11 @@
+
 import astropy.io.fits as fits
 import numpy as np
 import time
 import pyccl as ccl
 from more_itertools import locate
 
-data_dir = '/home/b7009348/projects/WGL_Project/DES-data/'
+data_dir = '/home/b7009348/WGL_project/DES-data/'
 
 def cut_flags(filename, method, flag_value=0):
     '''Function to make cuts to DES Y1 shape data based on flag values. Default flag is 0
