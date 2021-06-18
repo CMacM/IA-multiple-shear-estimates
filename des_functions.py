@@ -4,6 +4,7 @@ import numpy as np
 import time
 import pyccl as ccl
 from more_itertools import locate
+import treecorr
 
 data_dir = '/home/b7009348/WGL_project/DES-data/'
 
@@ -234,3 +235,79 @@ def calculate_F(nbins, source_z, lens_z, source_weights):
     F = rand_close/rand
     
     return F
+
+def im3_tangential_shear(cat_l, cat_s, cat_r, cat_k, nbins):
+    
+    gammat = np.zeros([nbins])
+    theta = np.zeros_like(gammat)
+    
+    # do correlations with lenese, NKCorrelation is used to apply multiplicative correction
+    ng = treecorr.NGCorrelation(nbins=nbins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    ng.process(cat_l, cat_s)
+    nk = treecorr.NKCorrelation(nbins=nbins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    nk.process(cat_l, cat_k)
+    
+    # do correlations with randoms
+    rg = treecorr.NGCorrelation(nbins=nbins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    rg.process(cat_r, cat_s)
+    rk = treecorr.NKCorrelation(nbins=nbins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    rk.process(cat_r, cat_k)
+    
+    # correlation functions and corrections for lenses and randoms
+    xi_l = ng.xi
+    sens_l = nk.xi
+    xi_r = rg.xi
+    sens_r = rk.xi
+    
+    # store data in preallocated arrays
+    gammat[:] = xi_l/sens_l - xi_r/sens_r
+    theta[:] = np.exp(ng.meanlogr)
+    
+    del ng, rg, nk, rk, xi_l, sens_l, xi_r, sens_r
+    
+    return gammat, theta
+
+def calculate_boost(cat_l, cat_s, cat_r, nbins):
+    
+    boost = np.zeros([nbins])
+    
+    # do count correlations to find boost
+    ls = treecorr.NNCorrelation(nbins=nbins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    ls.process(cat_l, cat_s)
+
+    rs = treecorr.NNCorrelation(nbins=nbins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    rs.process(cat_r, cat_s)
+    
+    nrand = cat_r.nobj
+    nlens = cat_l.nobj
+    
+    boost[:] = nrand/nlens * ls.weight/rs.weight
+    
+    del ls, rs, nrand, nlens
+    
+    return boost
+
+def mcal_tangential_shear(cat_l, cat_s, cat_r, nbins, R):
+    
+    gammat = np.zeros([nbins])
+    theta = np.zeros_like(gammat)
+    
+    # do correlations with lenses
+    ng = treecorr.NGCorrelation(nbins=nbins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    ng.process(cat_l, cat_s)
+    
+    # do correlations with randoms
+    rg = treecorr.NGCorrelation(nbins=nbins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    rg.process(cat_r, cat_s)
+    
+    # correlation functions and corrections for lenses and randoms
+    xi_l = ng.xi
+    xi_r = rg.xi
+    
+    # store data in preallocated arrays
+    gammat[:] = 1.0/R * (xi_l - xi_r)
+    theta[:] = np.exp(ng.meanlogr)
+    
+    del ng, rg, xi_l, xi_r
+    
+    return gammat, theta
