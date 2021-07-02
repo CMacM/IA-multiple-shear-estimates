@@ -1,10 +1,12 @@
 
 import astropy.io.fits as fits
+import fitsio
 import numpy as np
 import time
 import pyccl as ccl
 from more_itertools import locate
 import treecorr
+from datetime import date
 
 data_dir = '/home/b7009348/WGL_project/DES-data/'
 
@@ -257,7 +259,7 @@ def calculate_F(nbins, source_z, lens_z, source_weights):
     
     return F
 
-def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat):
+def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat, sep_bins, theta_min, theta_max):
     '''Function to calculate tangential shear based on im3shape measurements'''
     
     # preallocate output arrays
@@ -290,7 +292,7 @@ def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat):
     
     return gammat, theta
 
-def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp):
+def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp, sep_bins, theta_min, theta_max):
     '''Function to calculate tangential shear based on metacalibration measurments'''
     
     # preallocate output arrays
@@ -313,7 +315,7 @@ def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp):
     
     return gammat, theta
 
-def calculate_boost(lens_cat, rand_cat, source_cat):
+def calculate_boost(lens_cat, rand_cat, source_cat, sep_bins, theta_min, theta_max):
     '''Function to calculate boost. Any shear measurement method can be used as count-count correlations
     do not depend on estimated shear, only position.'''
     
@@ -333,7 +335,7 @@ def calculate_boost(lens_cat, rand_cat, source_cat):
     
     return boost
 
-def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins):
+def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbins, theta_min, theta_max):
     '''This function produces jackknife estimates of the IA signal with associated errors. It should be used in
     conjunction with IA_full() to obtain a full measurment with errors. The function should be provided with catalogues that have predefined
     jackknife patches using treecorrs catalogue attributes npatches and patch_centers. To ensure the patches are set up correctly consult
@@ -387,21 +389,13 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins):
 
         print('Patch %g located and sliced, calculating correlations...'%i)
 
-        mcal_tang, theta = mcal_tang_shear(lens_cat=temp_l, source_cat=temp_mcal, rand_cat=temp_r, Rsp=R)
+        mcal_tang, theta = mcal_tang_shear(lens_cat=temp_l, source_cat=temp_mcal, rand_cat=temp_r, Rsp=R, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
 
-        print('mcal correlation complete...')
+        im3_tang, theta = im3_tang_shear(lens_cat=temp_l, source_cat=temp_im3, rand_cat=temp_r, sens_cat=temp_k, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
 
-        im3_tang, theta = im3_tang_shear(lens_cat=temp_l, source_cat=temp_im3, rand_cat=temp_r, sens_cat=temp_k)
+        boost = calculate_boost(lens_cat=temp_l, rand_cat=temp_r, source_cat=temp_im3, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
 
-        print('im3 correlation complete...')
-
-        boost = calculate_boost(lens_cat=temp_l, rand_cat=temp_r, source_cat=temp_im3)
-
-        print('boost calculation complete...')
-
-        F = des.calculate_F(f_bins, source_z, rand_z, source_weights)
-
-        print('F calculation complete...')
+        F = calculate_F(nbins=fbins, source_z=source_z, lens_z=rand_z, source_weights=source_weights)
 
         IA_patches[i,:] = (im3_tang-mcal_tang) / (boost - 1.0 + F)
 
@@ -410,7 +404,7 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins):
 
         print('IA signal estimated, runtime=%f.'%diff)
 
-        del temp_l, temp_r, temp_mcal, temp_im3, temp_k, source_z, rand_z, source_weights, im3_tang, mcal_tang, theta, boost, F, rand_z, source_z, source_weights, R
+        del temp_l, temp_r, temp_mcal, temp_im3, temp_k, source_z, rand_z, source_weights, im3_tang, mcal_tang, theta, boost, F, R
     
     IA_jk = np.zeros([sep_bins])
     IA_sig = np.zeros([sep_bins])
@@ -425,7 +419,7 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins):
         
     return IA_jk, IA_sig
 
-def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins):
+def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins, fbins, theta_min, theta_max):
     '''This function estimates the IA signal using the entire sample of sources and lenses at once with no patches.
     outputs should be taken as the datapoints for an IA measurement, combined with the errors obtained from IA_jackknife().'''
     
@@ -449,6 +443,8 @@ def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins):
                                  dec_units='rad', k=cat_k.k, w=cat_k.w)
 
     R = np.mean(cat_mcal.r)
+    
+    print(R)
 
     rand_z = cat_r.r
     source_z = cat_im3.r
@@ -456,29 +452,53 @@ def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins):
 
     IA_final = np.zeros([sep_bins])
 
-    mcal, theta = mcal_tang_shear(lens_cat=cat_l, source_cat=cat_mcal, rand_cat=cat_r, Rsp=R)
+    mcal, theta = mcal_tang_shear(lens_cat=full_l, source_cat=full_mcal, rand_cat=full_r, Rsp=R, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+    
+    print('Mcal shears')
+    print(mcal)
 
-    print('mcal correlation complete...')
+    im3, theta = im3_tang_shear(lens_cat=full_l, source_cat=full_im3, rand_cat=full_r, sens_cat=full_k, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+    
+    print('im3 shears')
+    print(im3)
 
-    im3, theta = im3_tang_shear(lens_cat=cat_l, source_cat=cat_im3, rand_cat=cat_r, sens_cat=cat_k)
+    boost = calculate_boost(lens_cat=full_l, rand_cat=full_r, source_cat=full_im3, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+    
+    print(boost)
 
-    print('im3 correlation complete...')
-
-    boost = calculate_boost(lens_cat=cat_l, rand_cat=cat_r, source_cat=cat_im3)
-
-    print('boost calculation complete...')
-
-    F = des.calculate_F(nbins=f_bins, lens_z=rand_z, source_z=zmc, source_weights=cat_im3.w)
-
-    print('F calculation complete...')
+    F = calculate_F(nbins=fbins, lens_z=rand_z, source_z=source_z, source_weights=source_weights)
 
     IA_final = (im3 - mcal) / (boost - 1.0 + F)
+    
+    print(IA_final)
 
     end = time.time()
     diff = end-start
 
     print('Full signals estimated, runtime =%f.'%diff)
 
-    del full_l, full_r, full_im3, full_mcal, full_k, F, boost, im3, mcal
+    del full_l, full_r, full_im3, full_mcal, full_k, F, boost, im3, mcal, rand_z, source_z, source_weights, R
     
     return IA_final, theta
+
+def create_patches(lens_file, npatches):
+    
+    start=time.time()
+
+    with fits.open(data_dir+lens_file) as hdu:
+        data = hdu[1].data
+        ra_l = data['RA']
+        dec_l = data['DEC']
+        w_l = data['weight']
+    del data
+
+    cat_l = treecorr.Catalog(ra=ra_l, dec=dec_l, ra_units='deg', dec_units='deg', w=w_l, npatch=npatches)
+    
+    cat_l.write_patch_centers(data_dir+'jackknife_patch_centers')
+
+    end = time.time()
+    diff=end-start
+    
+    del cat_l, ra_l, dec_l, w_l
+
+    print('Patches saved, runtime=%f.'%diff)
