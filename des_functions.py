@@ -345,16 +345,16 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbi
     metaclaibration response and calculate the parameter F on a per-patch basis.'''
     
     IA_patches = np.zeros([npatches, sep_bins])
+    im3_patches = np.zeros([npatches, sep_bins])
+    mcal_patches = np.zeros([npatches, sep_bins])
+    boost_patches = np.zeros([npatches, sep_bins])
+    F_patches = np.zeros([npatches])
 
     for i in range(npatches):
     
         start = time.time()
-
-        im3_tang = np.zeros([sep_bins])
-        mcal_tang = np.zeros([sep_bins])
+        
         theta = np.zeros([sep_bins])
-        boost = np.zeros([sep_bins])
-        F = []
 
         l_indexes = list(locate(cat_l.patch, lambda x: x != i))
         r_indexes = list(locate(cat_r.patch, lambda x: x != i))
@@ -389,25 +389,26 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbi
 
         print('Patch %g located and sliced, calculating correlations...'%i)
 
-        mcal_tang, theta = mcal_tang_shear(lens_cat=temp_l, source_cat=temp_mcal, rand_cat=temp_r, Rsp=R, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+        mcal_patches[i,:], theta = mcal_tang_shear(lens_cat=temp_l, source_cat=temp_mcal, rand_cat=temp_r, Rsp=R, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
 
-        im3_tang, theta = im3_tang_shear(lens_cat=temp_l, source_cat=temp_im3, rand_cat=temp_r, sens_cat=temp_k, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+        im3_patches[i,:], theta = im3_tang_shear(lens_cat=temp_l, source_cat=temp_im3, rand_cat=temp_r, sens_cat=temp_k, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
 
-        boost = calculate_boost(lens_cat=temp_l, rand_cat=temp_r, source_cat=temp_im3, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+        boost_patches[i,:] = calculate_boost(lens_cat=temp_l, rand_cat=temp_r, source_cat=temp_im3, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
 
-        F = calculate_F(nbins=fbins, source_z=source_z, lens_z=rand_z, source_weights=source_weights)
+        F_patches[i] = calculate_F(nbins=fbins, source_z=source_z, lens_z=rand_z, source_weights=source_weights)
 
-        IA_patches[i,:] = (im3_tang-mcal_tang) / (boost - 1.0 + F)
+        IA_patches[i,:] = (im3_patches[i,:] - mcal_patches[i,:]) / (boost_patches[i,:] - 1.0 + F_patches[i])
 
         end = time.time()
         diff = end - start
 
         print('IA signal estimated, runtime=%f.'%diff)
 
-        del temp_l, temp_r, temp_mcal, temp_im3, temp_k, source_z, rand_z, source_weights, im3_tang, mcal_tang, theta, boost, F, R
+        del temp_l, temp_r, temp_mcal, temp_im3, temp_k, source_z, rand_z, source_weights, R
     
     IA_jk = np.zeros([sep_bins])
     IA_sig = np.zeros([sep_bins])
+    
     for i in range(sep_bins):
     
         bin_patches = IA_patches[:,i] 
@@ -415,7 +416,9 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbi
 
         IA_sig[i] = np.sqrt((npatches-1.0)/npatches * np.sum((bin_patches - IA_jk[i])**2))
         
-    del bin_patches, IA_patches
+    np.savez(file=data_dir+'ia_jackknife_values', IA=IA_patches, IA_err=IA_sig, im3=im3_patches, mcal=mcal_patches, boost=boost_patches, F=F_patches)
+        
+    del bin_patches, IA_patches, im3_patches, mcal_patches, theta, boost_patches, F_patches
         
     return IA_jk, IA_sig
 
@@ -443,8 +446,6 @@ def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins, fbins, theta_min, 
                                  dec_units='rad', k=cat_k.k, w=cat_k.w)
 
     R = np.mean(cat_mcal.r)
-    
-    print(R)
 
     rand_z = cat_r.r
     source_z = cat_im3.r
@@ -453,29 +454,21 @@ def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins, fbins, theta_min, 
     IA_final = np.zeros([sep_bins])
 
     mcal, theta = mcal_tang_shear(lens_cat=full_l, source_cat=full_mcal, rand_cat=full_r, Rsp=R, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
-    
-    print('Mcal shears')
-    print(mcal)
 
     im3, theta = im3_tang_shear(lens_cat=full_l, source_cat=full_im3, rand_cat=full_r, sens_cat=full_k, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
-    
-    print('im3 shears')
-    print(im3)
 
     boost = calculate_boost(lens_cat=full_l, rand_cat=full_r, source_cat=full_im3, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
-    
-    print(boost)
 
     F = calculate_F(nbins=fbins, lens_z=rand_z, source_z=source_z, source_weights=source_weights)
 
     IA_final = (im3 - mcal) / (boost - 1.0 + F)
     
-    print(IA_final)
+    np.savez(file=data_dir+'ia_full_values', IA=IA_final, im3=im3, mcal=mcal, boost=boost, F=F)
 
     end = time.time()
     diff = end-start
 
-    print('Full signals estimated, runtime =%f.'%diff)
+    print('Full signal estimated, runtime =%f.'%diff)
 
     del full_l, full_r, full_im3, full_mcal, full_k, F, boost, im3, mcal, rand_z, source_z, source_weights, R
     
