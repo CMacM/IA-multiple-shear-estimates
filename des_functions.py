@@ -7,26 +7,119 @@ import pyccl as ccl
 from more_itertools import locate
 import treecorr
 from datetime import date
+import subprocess 
+import sys
+import glob
+import os
 
 data_dir = '/home/b7009348/WGL_project/DES-data/'
 
+if not os.path.exists(data_dir+'gold_catalogues'):
+    os.mkdir(data_dir+'gold_catalogues')
+
+def run_subprocess(cmd, cwd=None, env=None):
+    '''A more sophistacted version of subprocess.check_call
+    which can handle errors in a more informative way.'''
+    P = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT)
+    l = True
+    while l:
+        l = P.stdout.read(1)
+        sys.stdout.write(l)
+    P.wait()
+    if P.returncode:
+        raise subprocess.CalledProcessError(returncode=P.returncode,
+                cmd=cmd)
+        
+def download_gold():
+    '''This function is used to download the entire DES Y1 gold catalogue'''
+    cmd = ['wget', '--quiet', '-m', '-P', data_dir+'/gold_catalogues', '-nH', '--cut-dirs=3', '-np', '-e',
+           'robots=off', 'http://desdr-server.ncsa.illinois.edu/despublic/y1a1_files/gold_catalogs/']
+    run_subprocess(cmd)
+    
+def cut_gold(filename, flag_value=0):
+    '''Created in addition to cut_flags. cut_flags will also cut based on gold flags, however, this function
+    can be used on files that have already been cut on their own flags or on other selections.'''
+    
+    start = time.time()
+    print('Opening files...')
+    
+    # create a list of all gold catalogue files
+    gold_files = glob.glob(data_dir+'gold_catalogues/*.fits')
+    
+    print('Locating gold flags...')
+    # loop through files and locate good flags, appending object IDs to list
+    gold_ids = []
+    for i in range(len(gold_files)):
+        # open gold file
+        with fits.open(gold_files[i]) as hdu:
+            gold_data = hdu[1].data
+        # locate good flags
+        gold_indexes = list(locate(gold_data['FLAGS_GOLD'], lambda x: x == flag_value))
+        # append object IDs cut on good flags
+        gold_ids.append(gold_data['COADD_OBJECTS_ID'][gold_indexes])
+    del gold_data, gold_indexes
+    
+    with fits.open(data_dir+filename) as hdu:
+        data = hdu[1].data
+    
+    # match IDs for good gold sources to remaining IDs in shape catalogue
+    matches, cat_indexes, gold_indexes = np.intersect1d(data['coadd_objects_id'], gold_ids, return_indices=True)
+    
+    print('Flags located, slicing data...')
+    data = data[cat_indexes]
+    del matches, cat_indexes, gold_indexes
+    
+    print('Saving to new file...')
+    fits.writeto(data_dir+'gold_cut_'+filename, data)
+    
+    end = time.time
+    diff = end-start
+    print('Runtime: %g'%diff)
+
 def cut_flags(filename, method, flag_value=0):
     '''Function to make cuts to DES Y1 shape data based on flag values. Default flag is 0
-    which defines a good source to use'''
+    which defines a good source to use. Requires gold catalogues to be downloaded as well.'''
     
     start = time.time()
     print('Opening file...')
     
+    # open the shape file
     with fits.open(data_dir+filename) as hdul:
         data = hdul[1].data
-        
+    
+    # locate good flags in shape file
     print('Locating flags...')
     indexes = list(locate(data['flags_select'], lambda x: x == flag_value))
     
+    # cut data on good flags in shape file
     print('Flags located, slicing data...')
     data = data[indexes]
     del indexes
     
+    # create a list of all gold catalogue files
+    gold_files = sorted(glob.glob(data_dir+'gold_catalogues/*.fits'))
+    
+    print('Locating gold flags...')
+    # loop through files and locate good flags, appending object IDs to list
+    gold_ids = []
+    for i in range(len(gold_files)):
+        # open gold file
+        with fits.open(gold_files[i]) as hdu:
+            gold_data = hdu[1].data
+        # locate good flags
+        gold_indexes = list(locate(gold_data['FLAGS_GOLD'], lambda x: x == flag_value))
+        # append object IDs cut on good flags
+        gold_ids.append(gold_data['COADD_OBJECTS_ID'][gold_indexes])
+    del gold_data, gold_indexes
+    
+    # match IDs for good gold sources to remaining IDs in shape catalogue
+    matches, cat_indexes, gold_indexes = np.intersect1d(data['coadd_objects_id'], gold_ids, return_indices=True)
+    
+    print('Flags located, slicing data...')
+    data = data[cat_indexes]
+    del matches, cat_indexes, gold_indexes
+        
     print('Data sliced, writing to new file...')
     fits.writeto(data_dir+'y1_'+method+'_flags=0.fits', data)
     
@@ -138,7 +231,10 @@ def match_catalogues(im3file, mcalfile, zfile):
     
     print('Locating NaNs...')
     indexes = list(locate(z_mc, lambda x: np.isnan(x) == False))
-    zIDs = zIDs[indexes]
+    if len(indexes) == len(zIDs):
+        print('No NaNs found')
+    else:
+        zIDs = zIDs[indexes]
     del z_mc, indexes
     
     with fits.open(data_dir+im3file) as hdul:
@@ -259,7 +355,7 @@ def calculate_F(nbins, source_z, lens_z, source_weights):
     
     return F
 
-def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat, sep_bins, theta_min, theta_max):
+def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat, sep_bins, theta_min, theta_max, bin_slop=0.4342944819032518):
     '''Function to calculate tangential shear based on im3shape measurements'''
     
     # preallocate output arrays
@@ -267,17 +363,17 @@ def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat, sep_bins, theta_min
     theta = np.zeros([sep_bins])
     
     # carry out tangential shear calculation with lenses
-    ng = treecorr.NGCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    ng = treecorr.NGCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     ng.process(lens_cat, source_cat)
     # calculate multiplicative bias correction with lenses
-    nk = treecorr.NKCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    nk = treecorr.NKCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     nk.process(lens_cat, sens_cat)
     
     # carry out tangential shear calculation with randoms
-    rg = treecorr.NGCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    rg = treecorr.NGCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     rg.process(rand_cat, source_cat)
     # calculate multiplicative bias correction with randoms
-    rk = treecorr.NKCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    rk = treecorr.NKCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     rk.process(rand_cat, sens_cat)
     
     # collect outputs 
@@ -292,7 +388,7 @@ def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat, sep_bins, theta_min
     
     return gammat, theta
 
-def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp, sep_bins, theta_min, theta_max):
+def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp, sep_bins, theta_min, theta_max, bin_slop=0.4342944819032518):
     '''Function to calculate tangential shear based on metacalibration measurments'''
     
     # preallocate output arrays
@@ -300,11 +396,11 @@ def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp, sep_bins, theta_min, th
     theta = np.zeros([sep_bins])
     
     # calculate tangential shear with lenses
-    ng = treecorr.NGCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    ng = treecorr.NGCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     ng.process(lens_cat, source_cat)
     
     # calculate tangential shear with randoms
-    rg = treecorr.NGCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    rg = treecorr.NGCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     rg.process(rand_cat, source_cat)
     
     xi_l = ng.xi
@@ -315,17 +411,17 @@ def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp, sep_bins, theta_min, th
     
     return gammat, theta
 
-def calculate_boost(lens_cat, rand_cat, source_cat, sep_bins, theta_min, theta_max):
+def calculate_boost(lens_cat, rand_cat, source_cat, sep_bins, theta_min, theta_max, bin_slop=0.4342944819032518):
     '''Function to calculate boost. Any shear measurement method can be used as count-count correlations
     do not depend on estimated shear, only position.'''
     
     # preallocate array
     boost = np.zeros(sep_bins)
     
-    ls = treecorr.NNCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    ls = treecorr.NNCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     ls.process(lens_cat, source_cat)
     
-    rs = treecorr.NNCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin')
+    rs = treecorr.NNCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     rs.process(rand_cat, source_cat)
     
     nrand = rand_cat.nobj
