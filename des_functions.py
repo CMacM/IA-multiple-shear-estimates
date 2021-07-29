@@ -50,21 +50,25 @@ def cut_gold(filename, flag_value=0):
     print('Locating gold flags...')
     # loop through files and locate good flags, appending object IDs to list
     gold_ids = []
+    old_ids = []
     for i in range(len(gold_files)):
         # open gold file
         with fits.open(gold_files[i]) as hdu:
             gold_data = hdu[1].data
         # locate good flags
         gold_indexes = list(locate(gold_data['FLAGS_GOLD'], lambda x: x == flag_value))
+        new_ids = gold_data['COADD_OBJECTS_ID'][gold_indexes]
         # append object IDs cut on good flags
-        gold_ids.append(gold_data['COADD_OBJECTS_ID'][gold_indexes])
-    del gold_data, gold_indexes
+        gold_ids = np.append(old_ids, new_ids)
+        old_ids = gold_ids
+        del gold_data, gold_indexes, new_ids, old_ids
     
     with fits.open(data_dir+filename) as hdu:
         data = hdu[1].data
+        shape_ids = data['coadd_objects_id']
     
     # match IDs for good gold sources to remaining IDs in shape catalogue
-    matches, cat_indexes, gold_indexes = np.intersect1d(data['coadd_objects_id'], gold_ids, return_indices=True)
+    matches, cat_indexes, gold_indexes = np.intersect1d(shape_ids, gold_ids, return_indices=True)
     
     print('Flags located, slicing data...')
     data = data[cat_indexes]
@@ -73,7 +77,7 @@ def cut_gold(filename, flag_value=0):
     print('Saving to new file...')
     fits.writeto(data_dir+'gold_cut_'+filename, data)
     
-    end = time.time
+    end = time.time()
     diff = end-start
     print('Runtime: %g'%diff)
 
@@ -103,18 +107,21 @@ def cut_flags(filename, method, flag_value=0):
     print('Locating gold flags...')
     # loop through files and locate good flags, appending object IDs to list
     gold_ids = []
+    old_ids = []
     for i in range(len(gold_files)):
         # open gold file
         with fits.open(gold_files[i]) as hdu:
             gold_data = hdu[1].data
         # locate good flags
         gold_indexes = list(locate(gold_data['FLAGS_GOLD'], lambda x: x == flag_value))
+        new_ids = gold_data['COADD_OBJECTS_ID'][gold_indexes]
         # append object IDs cut on good flags
-        gold_ids.append(gold_data['COADD_OBJECTS_ID'][gold_indexes])
-    del gold_data, gold_indexes
+        gold_ids = np.append(old_ids, new_ids)
+        old_ids = gold_ids
+    del gold_data, gold_indexes, new_ids, old_ids
     
     # match IDs for good gold sources to remaining IDs in shape catalogue
-    matches, cat_indexes, gold_indexes = np.intersect1d(data['coadd_objects_id'], gold_ids, return_indices=True)
+    matches, gold_indexes, cat_indexes = np.intersect1d(gold_ids, data['coadd_objects_id'], return_indices=True)
     
     print('Flags located, slicing data...')
     data = data[cat_indexes]
@@ -355,7 +362,7 @@ def calculate_F(nbins, source_z, lens_z, source_weights):
     
     return F
 
-def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat, sep_bins, theta_min, theta_max, bin_slop=0.4342944819032518):
+def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat, sep_bins, theta_min, theta_max, bin_slop=0.1):
     '''Function to calculate tangential shear based on im3shape measurements'''
     
     # preallocate output arrays
@@ -375,7 +382,7 @@ def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat, sep_bins, theta_min
     # calculate multiplicative bias correction with randoms
     rk = treecorr.NKCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     rk.process(rand_cat, sens_cat)
-    
+ 
     # collect outputs 
     xi_l = ng.xi
     sens_l = nk.xi
@@ -388,7 +395,7 @@ def im3_tang_shear(lens_cat, source_cat, sens_cat, rand_cat, sep_bins, theta_min
     
     return gammat, theta
 
-def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp, sep_bins, theta_min, theta_max, bin_slop=0.4342944819032518):
+def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp, sep_bins, theta_min, theta_max, bin_slop=0.1):
     '''Function to calculate tangential shear based on metacalibration measurments'''
     
     # preallocate output arrays
@@ -411,7 +418,7 @@ def mcal_tang_shear(lens_cat, source_cat, rand_cat, Rsp, sep_bins, theta_min, th
     
     return gammat, theta
 
-def calculate_boost(lens_cat, rand_cat, source_cat, sep_bins, theta_min, theta_max, bin_slop=0.4342944819032518):
+def calculate_boost(lens_cat, rand_cat, source_cat, sep_bins, theta_min, theta_max, bin_slop=0.1):
     '''Function to calculate boost. Any shear measurement method can be used as count-count correlations
     do not depend on estimated shear, only position.'''
     
@@ -423,7 +430,7 @@ def calculate_boost(lens_cat, rand_cat, source_cat, sep_bins, theta_min, theta_m
     
     rs = treecorr.NNCorrelation(nbins=sep_bins, min_sep=theta_min, max_sep=theta_max, sep_units='arcmin', bin_slop=bin_slop)
     rs.process(rand_cat, source_cat)
-    
+
     nrand = rand_cat.nobj
     nlens = lens_cat.nobj
     
@@ -431,7 +438,7 @@ def calculate_boost(lens_cat, rand_cat, source_cat, sep_bins, theta_min, theta_m
     
     return boost
 
-def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbins, theta_min, theta_max):
+def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbins, theta_min, theta_max, bin_slop=0.1):
     '''This function produces jackknife estimates of the IA signal with associated errors. It should be used in
     conjunction with IA_full() to obtain a full measurment with errors. The function should be provided with catalogues that have predefined
     jackknife patches using treecorrs catalogue attributes npatches and patch_centers. To ensure the patches are set up correctly consult
@@ -459,21 +466,21 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbi
         k_indexes = list(locate(cat_k.patch, lambda x: x != i))
 
         temp_l = treecorr.Catalog(ra=cat_l.ra[l_indexes], dec=cat_l.dec[l_indexes], 
-                                  ra_units='rad', dec_units='rad', w=cat_l.w[l_indexes])
+                                  ra_units='rad', dec_units='rad', w=cat_l.w[l_indexes], patch_centers=data_dir+'jackknife_patch_centers')
 
         temp_r = treecorr.Catalog(ra=cat_r.ra[r_indexes], dec=cat_r.dec[r_indexes],
-                                 ra_units='rad', dec_units='rad')
+                                 ra_units='rad', dec_units='rad', patch_centers=data_dir+'jackknife_patch_centers')
 
         temp_mcal = treecorr.Catalog(ra=cat_mcal.ra[mcal_indexes], dec=cat_mcal.dec[mcal_indexes], 
                                      ra_units='rad', dec_units='rad', g1=cat_mcal.g1[mcal_indexes],
-                                    g2=cat_mcal.g2[mcal_indexes])
+                                    g2=cat_mcal.g2[mcal_indexes], patch_centers=data_dir+'jackknife_patch_centers')
 
         temp_im3 = treecorr.Catalog(ra=cat_im3.ra[im3_indexes], dec=cat_im3.dec[im3_indexes],
                                    ra_units='rad', dec_units='rad', g1=cat_im3.g1[im3_indexes],
-                                   g2=cat_im3.g2[im3_indexes], w=cat_im3.w[im3_indexes])
+                                   g2=cat_im3.g2[im3_indexes], w=cat_im3.w[im3_indexes], patch_centers=data_dir+'jackknife_patch_centers')
 
         temp_k = treecorr.Catalog(ra=cat_k.ra[k_indexes], dec=cat_k.dec[k_indexes], ra_units='rad',
-                                 dec_units='rad', k=cat_k.k[k_indexes], w=cat_k.w[k_indexes])
+                                 dec_units='rad', k=cat_k.k[k_indexes], w=cat_k.w[k_indexes], patch_centers=data_dir+'jackknife_patch_centers')
 
         R = np.mean(cat_mcal.r[mcal_indexes])
 
@@ -485,11 +492,11 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbi
 
         print('Patch %g located and sliced, calculating correlations...'%i)
 
-        mcal_patches[i,:], theta = mcal_tang_shear(lens_cat=temp_l, source_cat=temp_mcal, rand_cat=temp_r, Rsp=R, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+        mcal_patches[i,:], theta = mcal_tang_shear(lens_cat=temp_l, source_cat=temp_mcal, rand_cat=temp_r, Rsp=R, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max, bin_slop=bin_slop)
 
-        im3_patches[i,:], theta = im3_tang_shear(lens_cat=temp_l, source_cat=temp_im3, rand_cat=temp_r, sens_cat=temp_k, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+        im3_patches[i,:], theta = im3_tang_shear(lens_cat=temp_l, source_cat=temp_im3, rand_cat=temp_r, sens_cat=temp_k, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max, bin_slop=bin_slop)
 
-        boost_patches[i,:] = calculate_boost(lens_cat=temp_l, rand_cat=temp_r, source_cat=temp_im3, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+        boost_patches[i,:] = calculate_boost(lens_cat=temp_l, rand_cat=temp_r, source_cat=temp_im3, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max, bin_slop=bin_slop)
 
         F_patches[i] = calculate_F(nbins=fbins, source_z=source_z, lens_z=rand_z, source_weights=source_weights)
 
@@ -518,28 +525,28 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbi
         
     return IA_jk, IA_sig
 
-def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins, fbins, theta_min, theta_max):
+def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins, fbins, theta_min, theta_max, bin_slop=0.1):
     '''This function estimates the IA signal using the entire sample of sources and lenses at once with no patches.
     outputs should be taken as the datapoints for an IA measurement, combined with the errors obtained from IA_jackknife().'''
     
     start = time.time()
     
     full_l = treecorr.Catalog(ra=cat_l.ra, dec=cat_l.dec, 
-                                  ra_units='rad', dec_units='rad', w=cat_l.w)
+                                  ra_units='rad', dec_units='rad', w=cat_l.w, patch_centers=data_dir+'jackknife_patch_centers')
     
     full_r = treecorr.Catalog(ra=cat_r.ra, dec=cat_r.dec,
-                                 ra_units='rad', dec_units='rad')
+                                 ra_units='rad', dec_units='rad', patch_centers=data_dir+'jackknife_patch_centers')
     
     full_im3 = treecorr.Catalog(ra=cat_im3.ra, dec=cat_im3.dec,
                                    ra_units='rad', dec_units='rad', g1=cat_im3.g1,
-                                   g2=cat_im3.g2, w=cat_im3.w)
+                                   g2=cat_im3.g2, w=cat_im3.w, patch_centers=data_dir+'jackknife_patch_centers')
     
     full_mcal = treecorr.Catalog(ra=cat_mcal.ra, dec=cat_mcal.dec, 
                                      ra_units='rad', dec_units='rad', g1=cat_mcal.g1,
-                                    g2=cat_mcal.g2)
+                                    g2=cat_mcal.g2, patch_centers=data_dir+'jackknife_patch_centers')
     
     full_k = treecorr.Catalog(ra=cat_k.ra, dec=cat_k.dec, ra_units='rad',
-                                 dec_units='rad', k=cat_k.k, w=cat_k.w)
+                                 dec_units='rad', k=cat_k.k, w=cat_k.w, patch_centers=data_dir+'jackknife_patch_centers')
 
     R = np.mean(cat_mcal.r)
 
@@ -549,11 +556,11 @@ def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins, fbins, theta_min, 
 
     IA_final = np.zeros([sep_bins])
 
-    mcal, theta = mcal_tang_shear(lens_cat=full_l, source_cat=full_mcal, rand_cat=full_r, Rsp=R, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+    mcal, theta = mcal_tang_shear(lens_cat=full_l, source_cat=full_mcal, rand_cat=full_r, Rsp=R, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max, bin_slop=bin_slop)
 
-    im3, theta = im3_tang_shear(lens_cat=full_l, source_cat=full_im3, rand_cat=full_r, sens_cat=full_k, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+    im3, theta = im3_tang_shear(lens_cat=full_l, source_cat=full_im3, rand_cat=full_r, sens_cat=full_k, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max, bin_slop=bin_slop)
 
-    boost = calculate_boost(lens_cat=full_l, rand_cat=full_r, source_cat=full_im3, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max)
+    boost = calculate_boost(lens_cat=full_l, rand_cat=full_r, source_cat=full_im3, sep_bins=sep_bins, theta_min=theta_min, theta_max=theta_max, bin_slop=bin_slop)
 
     F = calculate_F(nbins=fbins, lens_z=rand_z, source_z=source_z, source_weights=source_weights)
 
