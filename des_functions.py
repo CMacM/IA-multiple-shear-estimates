@@ -466,21 +466,21 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbi
         k_indexes = list(locate(cat_k.patch, lambda x: x != i))
 
         temp_l = treecorr.Catalog(ra=cat_l.ra[l_indexes], dec=cat_l.dec[l_indexes], 
-                                  ra_units='rad', dec_units='rad', w=cat_l.w[l_indexes], patch_centers=data_dir+'jackknife_patch_centers')
+                                  ra_units='rad', dec_units='rad', w=cat_l.w[l_indexes])
 
         temp_r = treecorr.Catalog(ra=cat_r.ra[r_indexes], dec=cat_r.dec[r_indexes],
-                                 ra_units='rad', dec_units='rad', patch_centers=data_dir+'jackknife_patch_centers')
+                                 ra_units='rad', dec_units='rad')
 
         temp_mcal = treecorr.Catalog(ra=cat_mcal.ra[mcal_indexes], dec=cat_mcal.dec[mcal_indexes], 
                                      ra_units='rad', dec_units='rad', g1=cat_mcal.g1[mcal_indexes],
-                                    g2=cat_mcal.g2[mcal_indexes], patch_centers=data_dir+'jackknife_patch_centers')
+                                    g2=cat_mcal.g2[mcal_indexes])
 
         temp_im3 = treecorr.Catalog(ra=cat_im3.ra[im3_indexes], dec=cat_im3.dec[im3_indexes],
                                    ra_units='rad', dec_units='rad', g1=cat_im3.g1[im3_indexes],
-                                   g2=cat_im3.g2[im3_indexes], w=cat_im3.w[im3_indexes], patch_centers=data_dir+'jackknife_patch_centers')
+                                   g2=cat_im3.g2[im3_indexes], w=cat_im3.w[im3_indexes])
 
         temp_k = treecorr.Catalog(ra=cat_k.ra[k_indexes], dec=cat_k.dec[k_indexes], ra_units='rad',
-                                 dec_units='rad', k=cat_k.k[k_indexes], w=cat_k.w[k_indexes], patch_centers=data_dir+'jackknife_patch_centers')
+                                 dec_units='rad', k=cat_k.k[k_indexes], w=cat_k.w[k_indexes])
 
         R = np.mean(cat_mcal.r[mcal_indexes])
 
@@ -510,16 +510,19 @@ def IA_jackknife(cat_l, cat_r, cat_im3, cat_mcal, cat_k, npatches, sep_bins, fbi
         del temp_l, temp_r, temp_mcal, temp_im3, temp_k, source_z, rand_z, source_weights, R
     
     IA_jk = np.zeros([sep_bins])
-    IA_sig = np.zeros([sep_bins])
+    IA_cov = np.zeros([sep_bins, sep_bins])
     
-    for i in range(sep_bins):
-    
+    for i in range(sep_bins): 
         bin_patches = IA_patches[:,i] 
         IA_jk[i] = 1.0/npatches * np.sum(bin_patches)
-
-        IA_sig[i] = np.sqrt((npatches-1.0)/npatches * np.sum((bin_patches - IA_jk[i])**2))
         
-    np.savez(file=data_dir+'ia_jackknife_values', IA=IA_patches, IA_err=IA_sig, im3=im3_patches, mcal=mcal_patches, boost=boost_patches, F=F_patches)
+    for i in range(sep_bins):
+        for j in range(sep_bins):
+            IA_cov[i,j] = (npatches-1.0)/npatches * np.sum((IA_patches[:,i] - IA_jk[i]) * (IA_patches[:,j] - IA_jk[j]))
+    
+    IA_sig = np.sqrt(np.diag(IA_cov))
+        
+    np.savez(file=data_dir+'ia_jackknife_values-bin_slop=%g'%bin_slop, IA=IA_patches, IA_cov=IA_cov, im3=im3_patches, mcal=mcal_patches, boost=boost_patches, F=F_patches)
         
     del bin_patches, IA_patches, im3_patches, mcal_patches, theta, boost_patches, F_patches
         
@@ -532,21 +535,21 @@ def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins, fbins, theta_min, 
     start = time.time()
     
     full_l = treecorr.Catalog(ra=cat_l.ra, dec=cat_l.dec, 
-                                  ra_units='rad', dec_units='rad', w=cat_l.w, patch_centers=data_dir+'jackknife_patch_centers')
+                                  ra_units='rad', dec_units='rad', w=cat_l.w)
     
     full_r = treecorr.Catalog(ra=cat_r.ra, dec=cat_r.dec,
-                                 ra_units='rad', dec_units='rad', patch_centers=data_dir+'jackknife_patch_centers')
+                                 ra_units='rad', dec_units='rad')
     
     full_im3 = treecorr.Catalog(ra=cat_im3.ra, dec=cat_im3.dec,
                                    ra_units='rad', dec_units='rad', g1=cat_im3.g1,
-                                   g2=cat_im3.g2, w=cat_im3.w, patch_centers=data_dir+'jackknife_patch_centers')
+                                   g2=cat_im3.g2, w=cat_im3.w)
     
     full_mcal = treecorr.Catalog(ra=cat_mcal.ra, dec=cat_mcal.dec, 
                                      ra_units='rad', dec_units='rad', g1=cat_mcal.g1,
-                                    g2=cat_mcal.g2, patch_centers=data_dir+'jackknife_patch_centers')
+                                    g2=cat_mcal.g2)
     
     full_k = treecorr.Catalog(ra=cat_k.ra, dec=cat_k.dec, ra_units='rad',
-                                 dec_units='rad', k=cat_k.k, w=cat_k.w, patch_centers=data_dir+'jackknife_patch_centers')
+                                 dec_units='rad', k=cat_k.k, w=cat_k.w)
 
     R = np.mean(cat_mcal.r)
 
@@ -566,7 +569,7 @@ def IA_full(cat_l, cat_r, cat_im3, cat_mcal, cat_k, sep_bins, fbins, theta_min, 
 
     IA_final = (im3 - mcal) / (boost - 1.0 + F)
     
-    np.savez(file=data_dir+'ia_full_values', IA=IA_final, im3=im3, mcal=mcal, boost=boost, F=F)
+    np.savez(file=data_dir+'ia_full_values-bin_slop=%g'%bin_slop, IA=IA_final, im3=im3, mcal=mcal, boost=boost, F=F)
 
     end = time.time()
     diff = end-start
